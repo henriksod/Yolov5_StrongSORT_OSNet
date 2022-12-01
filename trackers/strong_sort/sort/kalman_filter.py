@@ -32,6 +32,7 @@ class KalmanFilter(object):
 
     def __init__(self):
         ndim, dt = 4, 1.
+        self._I = np.eye(2 * ndim)
 
         # Create Kalman filter model matrices.
         self._motion_mat = np.eye(2 * ndim, 2 * ndim)
@@ -48,8 +49,11 @@ class KalmanFilter(object):
         
         self.image_width = 0
         self.image_height = 0
+        
+        self._process_noise = np.zeros((8, 8))
+        self._measurement_noise = np.zeros((4, 4))
     
-    def distance_to_image_center(self, bbox):
+    def distance_to_image_center(self, bbox):  # FIXME: image shape might be reversed
         return np.sqrt((self.image_width / 2 - bbox[0]) ** 2 + (self.image_height / 2 - bbox[1]) ** 2)
 
     def initiate(self, measurement):
@@ -111,11 +115,11 @@ class KalmanFilter(object):
             self._std_weight_velocity * dist,
             0.1 * mean[2],
             self._std_weight_velocity * mean[3]]
-        motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
+        self._process_noise = np.diag(np.square(np.r_[std_pos, std_vel]))
 
         mean = np.dot(self._motion_mat, mean)
         covariance = np.linalg.multi_dot((
-            self._motion_mat, covariance, self._motion_mat.T)) + motion_cov
+            self._motion_mat, covariance, self._motion_mat.T)) + self._process_noise
 
         return mean, covariance
 
@@ -143,12 +147,14 @@ class KalmanFilter(object):
 
         std = [(1 - confidence) * x for x in std]
 
-        innovation_cov = np.diag(np.square(std))
-
-        mean = np.dot(self._update_mat, mean)
-        covariance = np.linalg.multi_dot((
+        self._measurement_noise = np.diag(np.square(std))
+        
+        projected_mean = np.dot(self._update_mat, mean)
+        projected_cov = np.linalg.multi_dot((
             self._update_mat, covariance, self._update_mat.T))
-        return mean, covariance + innovation_cov
+        projected_cov += self._measurement_noise
+            
+        return projected_mean, projected_cov
 
     def update(self, mean, covariance, measurement, confidence=.0):
         """Run Kalman filter correction step.
@@ -168,8 +174,9 @@ class KalmanFilter(object):
         (ndarray, ndarray)
             Returns the measurement-corrected state distribution.
         """
+        
         projected_mean, projected_cov = self.project(mean, covariance, confidence)
-
+        
         chol_factor, lower = scipy.linalg.cho_factor(
             projected_cov, lower=True, check_finite=False)
         kalman_gain = scipy.linalg.cho_solve(
@@ -178,8 +185,15 @@ class KalmanFilter(object):
         innovation = measurement - projected_mean
 
         new_mean = mean + np.dot(innovation, kalman_gain.T)
-        new_covariance = covariance - np.linalg.multi_dot((
-            kalman_gain, projected_cov, kalman_gain.T))
+        
+        # The following way of updating the state covariance is more numerically
+        # stable than the text book equation P' = (I-KH)P
+        I_KH = self._I - np.dot(kalman_gain, self._update_mat)
+        new_covariance = (
+            np.linalg.multi_dot((I_KH, covariance, I_KH.T))
+            + np.linalg.multi_dot((kalman_gain, self._measurement_noise, kalman_gain.T))
+        )
+            
         return new_mean, new_covariance
 
     def gating_distance(self, mean, covariance, measurements,
@@ -208,14 +222,14 @@ class KalmanFilter(object):
             squared Mahalanobis distance between (mean, covariance) and
             `measurements[i]`.
         """
-        mean, covariance = self.project(mean, covariance)
+        projected_mean, projected_cov = self.project(mean, covariance)
 
         if only_position:
-            mean, covariance = mean[:2], covariance[:2, :2]
+            projected_mean, projected_cov = projected_mean[:2], projected_cov[:2, :2]
             measurements = measurements[:, :2]
 
-        cholesky_factor = np.linalg.cholesky(covariance)
-        d = measurements - mean
+        cholesky_factor = np.linalg.cholesky(projected_cov)
+        d = measurements - projected_mean
         z = scipy.linalg.solve_triangular(
             cholesky_factor, d.T, lower=True, check_finite=False,
             overwrite_b=True)

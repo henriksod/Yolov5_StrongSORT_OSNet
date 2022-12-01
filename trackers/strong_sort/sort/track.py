@@ -220,8 +220,8 @@ class Track:
 
     def camera_update(self, previous_frame, next_frame):
         # Update image sizes for kalman filter (used to get distance from center)
-        self.kf.image_width = next_frame.shape[0]
-        self.kf.image_height = next_frame.shape[1]
+        self.kf.image_width = next_frame.shape[1]
+        self.kf.image_height = next_frame.shape[0]
         
         warp_matrix, src_aligned = self.ECC(previous_frame, next_frame)
         if warp_matrix is None and src_aligned is None:
