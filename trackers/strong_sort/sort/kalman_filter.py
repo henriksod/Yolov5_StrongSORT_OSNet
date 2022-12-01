@@ -53,7 +53,7 @@ class KalmanFilter(object):
         self._process_noise = np.zeros((8, 8))
         self._measurement_noise = np.zeros((4, 4))
     
-    def distance_to_image_center(self, bbox):  # FIXME: image shape might be reversed
+    def distance_to_image_center(self, bbox):
         return np.sqrt((self.image_width / 2 - bbox[0]) ** 2 + (self.image_height / 2 - bbox[1]) ** 2)
 
     def initiate(self, measurement):
